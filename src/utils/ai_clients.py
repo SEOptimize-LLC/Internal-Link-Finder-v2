@@ -10,20 +10,62 @@ class AIClient:
 
     def _init_client(self):
         if self.provider == "OpenAI":
-            from openai import OpenAI
-            api_key = st.secrets["openai"]["api_key"]
-            self.client = OpenAI(api_key=api_key)
+            try:
+                # Debug: Check if secrets exist
+                if "openai" not in st.secrets:
+                    st.error("❌ 'openai' section not found in secrets!")
+                    self.client = None
+                    return
+                
+                # Debug: Check if api_key exists
+                openai_secrets = st.secrets["openai"]
+                if "api_key" not in openai_secrets:
+                    st.error("❌ 'api_key' not found in openai secrets!")
+                    self.client = None
+                    return
+                
+                api_key = openai_secrets["api_key"]
+                
+                # Debug: Check if api_key is empty or placeholder
+                if not api_key or api_key == "sk-proj-YOUR-ACTUAL-KEY-HERE":
+                    st.error("❌ OpenAI API key is empty or still a placeholder!")
+                    self.client = None
+                    return
+                
+                # Debug: Show key format (first few chars only)
+                st.info(f"🔑 OpenAI key starts with: {api_key[:10]}...")
+                
+                from openai import OpenAI
+                self.client = OpenAI(api_key=api_key)
+                st.success("✅ OpenAI client initialized successfully!")
+                
+            except Exception as e:
+                st.error(f"❌ Error initializing OpenAI: {str(e)}")
+                self.client = None
+                
         elif self.provider == "Anthropic":
-            import anthropic
-            self.client = anthropic.Anthropic(api_key=st.secrets["anthropic"]["api_key"])
+            try:
+                import anthropic
+                self.client = anthropic.Anthropic(api_key=st.secrets["anthropic"]["api_key"])
+            except Exception as e:
+                st.error(f"❌ Error initializing Anthropic: {str(e)}")
+                self.client = None
+                
         elif self.provider == "Gemini":
-            import google.generativeai as genai
-            genai.configure(api_key=st.secrets["gemini"]["api_key"])
-            self.client = genai
+            try:
+                import google.generativeai as genai
+                genai.configure(api_key=st.secrets["gemini"]["api_key"])
+                self.client = genai
+            except Exception as e:
+                st.error(f"❌ Error initializing Gemini: {str(e)}")
+                self.client = None
         else:
             self.client = None
 
     def complete(self, prompt: str):
+        if self.client is None:
+            return None
+            
         try:
             if self.provider == "OpenAI":
                 resp = self.client.chat.completions.create(
@@ -54,7 +96,8 @@ class AIClient:
                 return out.text
             else:
                 return None
-        except Exception:
+        except Exception as e:
+            st.error(f"❌ Error during completion: {str(e)}")
             return None
 
 def get_available_ai_providers(cfg) -> List[str]:
