@@ -255,10 +255,14 @@ with tabs[1]:
                 flat_keywords = sorted({kw for kws in st.session_state.url_keywords_map.values() for kw in kws})
                 if flat_keywords:
                     if st.button(f"📊 Get Search Volume ({len(flat_keywords)} kw)", use_container_width=True):
-                        with st.spinner("Fetching search volumes from DataForSEO..."):
-                            search_volume_map = dataforseo_client.get_monthly_search_volume(
-                                flat_keywords, 
-                                location="US", 
+                        with st.spinner(f"Fetching search volumes from DataForSEO ({len(flat_keywords)} keywords in {(len(flat_keywords)-1)//1000 + 1} batches)..."):
+                            from src.core.dataforseo_client import get_search_volumes_cached
+                            dfs_secrets = st.secrets.get("dataforseo", {})
+                            search_volume_map = get_search_volumes_cached(
+                                flat_keywords,
+                                dfs_secrets.get("login", ""),
+                                dfs_secrets.get("password", ""),
+                                location="US",
                                 language="English"
                             )
                             st.session_state.search_volume_map = {k.lower(): v for k, v in search_volume_map.items()}
@@ -514,3 +518,4 @@ with tabs[3]:
 st.divider()
 st.caption("🔗 Enhanced Internal Link Opportunity Finder | Multi-Client SEO Tool | File Upload Version")
 st.caption("Export GSC data manually and upload as CSV for best results")
+
