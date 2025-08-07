@@ -4,10 +4,9 @@ import time
 from typing import List, Dict
 import requests
 import streamlit as st
-from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type
 
 class DataForSEOClient:
-    # Updated to use clickstream endpoint as requested
+    # Using the correct endpoint
     BASE_URL = "https://api.dataforseo.com/v3/keywords_data/clickstream_data/dataforseo_search_volume/live"
 
     def __init__(self):
@@ -21,13 +20,26 @@ class DataForSEOClient:
         auth_str = f"{self.login}:{self.password}"
         self.auth_header = "Basic " + base64.b64encode(auth_str.encode()).decode()
 
-    @retry(stop=stop_after_attempt(3), wait=wait_exponential(multiplier=1, min=1, max=10),
-           retry=retry_if_exception_type((requests.RequestException,)))
-    def _post(self, payload: Dict) -> Dict:
-        headers = {"Authorization": self.auth_header, "Content-Type": "application/json"}
-        resp = requests.post(self.BASE_URL, headers=headers, data=json.dumps(payload), timeout=60)
-        resp.raise_for_status()
-        return resp.json()
+    def _post(self, payload: List[Dict]) -> Dict:
+        """Make POST request to DataForSEO API"""
+        headers = {
+            "Authorization": self.auth_header,
+            "Content-Type": "application/json"
+        }
+        try:
+            resp = requests.post(
+                self.BASE_URL,
+                headers=headers,
+                data=json.dumps(payload),
+                timeout=60
+            )
+            resp.raise_for_status()
+            return resp.json()
+        except requests.exceptions.RequestException as e:
+            st.error(f"DataForSEO API request failed: {str(e)}")
+            if hasattr(e.response, 'text'):
+                st.error(f"Response: {e.response.text}")
+            raise
 
     def get_monthly_search_volume(self, keywords: List[str], location: str = "US", language: str = "English") -> Dict[str, int]:
         """
@@ -39,10 +51,10 @@ class DataForSEOClient:
         
         results: Dict[str, int] = {}
         
-        # Batch in groups of 1,000 as requested (DataForSEO charges same for 1 or 1000)
+        # Batch in groups of 1,000 as requested
         chunk_size = 1000
         
-        # Location codes mapping
+        # Location codes mapping - DataForSEO uses specific location codes
         loc_code = {
             "US": 2840, 
             "United States": 2840, 
@@ -58,35 +70,36 @@ class DataForSEOClient:
         
         for i, chunk in enumerate(chunks):
             try:
-                # Prepare payload for clickstream endpoint
-                payload = {
-                    "data": [
-                        {
-                            "keywords": chunk,
-                            "location_code": loc_code,
-                            "language_code": "en" if language == "English" else language.lower()[:2]
-                        }
-                    ]
-                }
+                # Correct payload format for clickstream endpoint
+                # The API expects an array of task objects
+                payload = [
+                    {
+                        "keywords": chunk,
+                        "location_code": loc_code,
+                        "language_code": "en"  # DataForSEO uses language codes, not names
+                    }
+                ]
                 
                 # Make API request
                 data = self._post(payload)
                 
                 # Parse response
-                tasks = data.get("tasks", [])
-                for task in tasks:
-                    if task.get("status_code") == 20000:  # Success
-                        for result in task.get("result", []):
-                            for item in result.get("items", []):
-                                kw = item.get("keyword", "")
-                                # For clickstream endpoint, volume is directly in search_volume field
-                                vol = item.get("search_volume", 0) or 0
-                                if kw:
-                                    results[kw.lower()] = vol
-                    else:
-                        # Log error but continue processing
-                        error_msg = task.get("status_message", "Unknown error")
-                        st.warning(f"DataForSEO API error for batch {i+1}: {error_msg}")
+                if "tasks" in data:
+                    for task in data["tasks"]:
+                        if task.get("status_code") == 20000:  # Success
+                            result_data = task.get("result", [])
+                            if result_data and len(result_data) > 0:
+                                items = result_data[0].get("items", [])
+                                for item in items:
+                                    kw = item.get("keyword", "")
+                                    vol = item.get("search_volume", 0)
+                                    if kw:
+                                        # Store with lowercase for case-insensitive matching
+                                        results[kw.lower()] = vol
+                        else:
+                            # Log error but continue processing
+                            error_msg = task.get("status_message", "Unknown error")
+                            st.warning(f"DataForSEO API error for batch {i+1}: {error_msg}")
                 
                 # Rate limiting - be nice to the API
                 if i < len(chunks) - 1:
@@ -99,12 +112,20 @@ class DataForSEOClient:
         return results
 
 
-# Standalone cached function to avoid hashing issues
-@st.cache_data(show_spinner=False, ttl=3600)  # Cache for 1 hour
-def get_search_volumes_cached(keywords: List[str], login: str, password: str, location: str = "US", language: str = "English") -> Dict[str, int]:
-    """
-    Cached wrapper for DataForSEO API calls.
-    Cache key includes keywords and credentials to ensure proper caching.
-    """
-    client = DataForSEOClient()
-    return client.get_monthly_search_volume(keywords, location, language)
+# Standalone function to avoid caching the client instance
+def get_search_volumes(keywords: List[str], login: str, password: str, location: str = "US") -> Dict[str, int]:
+    """Non-cached version for direct use"""
+    # Create a temporary client just for this request
+    temp_secrets = st.secrets._store.copy()
+    temp_secrets["dataforseo"] = {"login": login, "password": password}
+    
+    # Temporarily override secrets
+    original_secrets = st.secrets._store
+    st.secrets._store = temp_secrets
+    
+    try:
+        client = DataForSEOClient()
+        return client.get_monthly_search_volume(keywords, location, "English")
+    finally:
+        # Restore original secrets
+        st.secrets._store = original_secrets
