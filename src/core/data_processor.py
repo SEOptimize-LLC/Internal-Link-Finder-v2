@@ -46,32 +46,58 @@ class EnhancedDataProcessor:
         return out
 
     def _parse_embeddings(self, df: pd.DataFrame):
-        url_col = next((c for c in df.columns if c.lower() in ("url","page","address")), None)
+        # Find URL column - look for variations
+        url_col = None
+        for c in df.columns:
+            c_lower = c.lower()
+            if any(term in c_lower for term in ["url", "page", "address"]):
+                url_col = c
+                break
+        
         if url_col is None:
-            raise ValueError("Embeddings CSV must include a URL column.")
+            raise ValueError("Embeddings CSV must include a URL/Address column.")
+        
         vecs = {}
-        emb_col = next((c for c in df.columns if c.lower() in ("embedding","vector")), None)
+        
+        # Find embedding column - look for more variations
+        emb_col = None
+        for c in df.columns:
+            c_lower = c.lower()
+            # Check for various embedding column names
+            if any(term in c_lower for term in ["embedding", "vector", "extract embedding", "page content"]):
+                emb_col = c
+                break
+        
         if emb_col:
+            # Parse embeddings from the found column
             for _, row in df.iterrows():
                 url = str(row[url_col]).strip()
                 raw = row[emb_col]
                 if pd.isna(raw):
                     continue
                 try:
+                    # Try to parse as JSON first
                     if isinstance(raw, str):
-                        v = json.loads(raw)
+                        # Remove any potential formatting
+                        raw = raw.strip()
+                        if raw.startswith('[') and raw.endswith(']'):
+                            v = json.loads(raw)
+                        else:
+                            # Try to evaluate as Python literal
+                            v = ast.literal_eval(raw)
                     else:
                         v = raw
-                except Exception:
-                    try:
-                        v = ast.literal_eval(str(raw))
-                    except Exception:
-                        continue
-                try:
+                    
+                    # Convert to numpy array
                     vecs[url] = np.array(v, dtype="float32")
-                except Exception:
+                except Exception as e:
+                    # Skip rows that can't be parsed
                     continue
-            return vecs
+            
+            if vecs:
+                return vecs
+        
+        # Check for multiple embedding columns (emb_0, emb_1, etc.)
         emb_cols = [c for c in df.columns if str(c).lower().startswith("emb_")]
         if len(emb_cols) > 0:
             emb_cols_sorted = sorted(emb_cols, key=lambda x: int(str(x).split("_")[1]) if "_" in str(x) and str(x).split("_")[1].isdigit() else 0)
@@ -80,7 +106,9 @@ class EnhancedDataProcessor:
                 v = row[emb_cols_sorted].astype(float).to_numpy(dtype="float32")
                 vecs[url] = v
             return vecs
-        raise ValueError("Embeddings CSV must have an 'embedding' column or multiple 'emb_#' columns.")
+        
+        # If we still haven't found embeddings, provide more helpful error
+        raise ValueError(f"Could not find embeddings in CSV. Found columns: {', '.join(df.columns[:10])}... Please ensure your embeddings are in a column containing 'embedding' or 'vector' in the name.")
 
     def _normalize_gsc_df(self, df: pd.DataFrame) -> pd.DataFrame:
         rename_map = {}
