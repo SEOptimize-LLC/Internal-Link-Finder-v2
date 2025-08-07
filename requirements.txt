@@ -1,16 +1,18 @@
+# Core dependencies
 streamlit==1.36.0
 pandas==2.2.2
 numpy==1.26.4
+
+# Web scraping and requests
 requests==2.32.3
-google-api-python-client==2.140.0
-google-auth==2.32.0
-google-auth-httplib2==0.2.0
-google-auth-oauthlib==1.2.1
-tenacity==8.5.0
 beautifulsoup4==4.12.3
-openpyxl==3.1.5
+tenacity==8.5.0
 tldextract==5.1.2
-gspread==6.1.2
+
+# File handling
+openpyxl==3.1.5
+
+# AI providers (at least one required)
 openai==1.37.1
 anthropic==0.34.2
 google-generativeai==0.7.2
