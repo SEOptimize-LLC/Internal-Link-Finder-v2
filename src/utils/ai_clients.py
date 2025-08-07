@@ -1,7 +1,5 @@
 import streamlit as st
 from typing import Optional, List
-import os
-import sys
 
 class AIClient:
     def __init__(self, provider: str, model: str, temperature: float = 0.4):
@@ -13,60 +11,55 @@ class AIClient:
     def _init_client(self):
         if self.provider == "OpenAI":
             try:
-                # More aggressive proxy bypass for Streamlit Cloud
-                import httpx
-                
-                # Monkey patch httpx.Client to ignore proxies
-                original_client_init = httpx.Client.__init__
-                
-                def patched_init(self, **kwargs):
-                    # Remove proxy-related arguments
-                    kwargs.pop('proxies', None)
-                    kwargs.pop('proxy', None)
-                    kwargs.pop('trust_env', None)
-                    original_client_init(self, **kwargs)
-                
-                httpx.Client.__init__ = patched_init
-                
-                # Now import and initialize OpenAI
                 from openai import OpenAI
                 api_key = st.secrets["openai"]["api_key"]
                 
-                # Create client with explicit configuration
-                self.client = OpenAI(
-                    api_key=api_key,
-                    http_client=httpx.Client(
-                        follow_redirects=True,
-                        timeout=60.0
-                    )
-                )
-                
-                # Restore original httpx.Client.__init__
-                httpx.Client.__init__ = original_client_init
-                
+                # Try multiple initialization approaches
+                try:
+                    # First attempt - normal initialization
+                    self.client = OpenAI(api_key=api_key)
+                except TypeError as e:
+                    if "proxies" in str(e):
+                        # Fallback - create client with minimal configuration
+                        import httpx
+                        from openai import OpenAI
+                        
+                        # Create a basic httpx client without proxy support
+                        http_client = httpx.Client()
+                        
+                        # Try to create OpenAI client with custom http client
+                        self.client = OpenAI(
+                            api_key=api_key,
+                            http_client=http_client
+                        )
+                    else:
+                        raise e
+                        
             except Exception as e:
                 st.error(f"Error initializing OpenAI: {str(e)}")
+                # Fallback to requests-based implementation
                 self.client = None
+                self.api_key = st.secrets["openai"]["api_key"]
                 
         elif self.provider == "Anthropic":
             try:
                 import anthropic
                 api_key = st.secrets["anthropic"]["api_key"]
                 
-                # Similar fix for Anthropic if needed
-                import httpx
-                original_client_init = httpx.Client.__init__
-                
-                def patched_init(self, **kwargs):
-                    kwargs.pop('proxies', None)
-                    kwargs.pop('proxy', None)
-                    kwargs.pop('trust_env', None)
-                    original_client_init(self, **kwargs)
-                
-                httpx.Client.__init__ = patched_init
-                self.client = anthropic.Anthropic(api_key=api_key)
-                httpx.Client.__init__ = original_client_init
-                
+                try:
+                    self.client = anthropic.Anthropic(api_key=api_key)
+                except TypeError as e:
+                    if "proxies" in str(e):
+                        # Similar fallback for Anthropic
+                        import httpx
+                        http_client = httpx.Client()
+                        self.client = anthropic.Anthropic(
+                            api_key=api_key,
+                            http_client=http_client
+                        )
+                    else:
+                        raise e
+                        
             except Exception as e:
                 st.error(f"Error initializing Anthropic: {str(e)}")
                 self.client = None
@@ -83,6 +76,34 @@ class AIClient:
             self.client = None
 
     def complete(self, prompt: str):
+        if self.provider == "OpenAI" and self.client is None and hasattr(self, 'api_key'):
+            # Fallback implementation using requests if client initialization failed
+            try:
+                import requests
+                headers = {
+                    "Authorization": f"Bearer {self.api_key}",
+                    "Content-Type": "application/json"
+                }
+                data = {
+                    "model": self.model or "gpt-4o-mini",
+                    "messages": [
+                        {"role": "system", "content": "You are a helpful SEO assistant."},
+                        {"role": "user", "content": prompt}
+                    ],
+                    "temperature": self.temperature,
+                    "max_tokens": 200
+                }
+                response = requests.post(
+                    "https://api.openai.com/v1/chat/completions",
+                    headers=headers,
+                    json=data
+                )
+                response.raise_for_status()
+                return response.json()["choices"][0]["message"]["content"]
+            except Exception as e:
+                st.error(f"Error during OpenAI completion (fallback): {str(e)}")
+                return None
+                
         if self.client is None:
             return None
             
