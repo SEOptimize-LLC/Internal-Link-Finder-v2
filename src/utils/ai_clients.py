@@ -14,15 +14,14 @@ class AIClient:
 
     def _init_client(self):
         if self.provider == "OpenAI":
-            # Don't use OpenAI SDK on Streamlit Cloud - use requests instead
+            # NEVER import OpenAI SDK - only use requests
             self.api_key = st.secrets.get("openai", {}).get("api_key")
             if not self.api_key:
                 st.error("OpenAI API key not found in secrets")
-            # We'll use requests directly, no client needed
-            self.client = None
+            self.client = None  # We don't use a client for OpenAI
                 
         elif self.provider == "Anthropic":
-            # Also use requests for Anthropic to avoid similar issues
+            # Also skip Anthropic SDK to avoid similar issues
             self.api_key = st.secrets.get("anthropic", {}).get("api_key")
             self.client = None
                 
@@ -47,13 +46,12 @@ class AIClient:
                 out = m.generate_content(prompt)
                 return out.text
             except Exception as e:
-                st.error(f"Error during Gemini completion: {str(e)}")
                 return None
         else:
             return None
 
     def _openai_complete_requests(self, prompt: str):
-        """Direct HTTP request to OpenAI API, bypassing the SDK"""
+        """Direct HTTP request to OpenAI API"""
         if not self.api_key:
             return None
             
@@ -73,28 +71,24 @@ class AIClient:
                 "max_tokens": 200
             }
             
-            # Use requests with explicit timeout and no proxy
             response = requests.post(
                 "https://api.openai.com/v1/chat/completions",
                 headers=headers,
                 json=data,
-                timeout=30,
-                proxies={"http": None, "https": None}  # Explicitly disable proxies
+                timeout=30
             )
             
             if response.status_code == 200:
                 result = response.json()
                 return result["choices"][0]["message"]["content"]
             else:
-                st.error(f"OpenAI API error: {response.status_code} - {response.text}")
                 return None
                 
         except Exception as e:
-            st.error(f"Error calling OpenAI API: {str(e)}")
             return None
 
     def _anthropic_complete_requests(self, prompt: str):
-        """Direct HTTP request to Anthropic API, bypassing the SDK"""
+        """Direct HTTP request to Anthropic API"""
         if not self.api_key:
             return None
             
@@ -116,23 +110,19 @@ class AIClient:
                 "https://api.anthropic.com/v1/messages",
                 headers=headers,
                 json=data,
-                timeout=30,
-                proxies={"http": None, "https": None}  # Explicitly disable proxies
+                timeout=30
             )
             
             if response.status_code == 200:
                 result = response.json()
-                # Anthropic returns content as an array
                 content = result.get("content", [])
                 if content and len(content) > 0:
                     return content[0].get("text", "")
                 return ""
             else:
-                st.error(f"Anthropic API error: {response.status_code} - {response.text}")
                 return None
                 
         except Exception as e:
-            st.error(f"Error calling Anthropic API: {str(e)}")
             return None
 
 def get_available_ai_providers(cfg) -> List[str]:
