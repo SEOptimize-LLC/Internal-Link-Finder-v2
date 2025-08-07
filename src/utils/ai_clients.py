@@ -1,6 +1,7 @@
 import streamlit as st
 from typing import Optional, List
 import os
+import sys
 
 class AIClient:
     def __init__(self, provider: str, model: str, temperature: float = 0.4):
@@ -12,25 +13,37 @@ class AIClient:
     def _init_client(self):
         if self.provider == "OpenAI":
             try:
+                # More aggressive proxy bypass for Streamlit Cloud
+                import httpx
+                
+                # Monkey patch httpx.Client to ignore proxies
+                original_client_init = httpx.Client.__init__
+                
+                def patched_init(self, **kwargs):
+                    # Remove proxy-related arguments
+                    kwargs.pop('proxies', None)
+                    kwargs.pop('proxy', None)
+                    kwargs.pop('trust_env', None)
+                    original_client_init(self, **kwargs)
+                
+                httpx.Client.__init__ = patched_init
+                
+                # Now import and initialize OpenAI
                 from openai import OpenAI
                 api_key = st.secrets["openai"]["api_key"]
                 
-                # Fix for Streamlit Cloud proxy issue
-                # Clear proxy environment variables that cause issues with OpenAI client
-                proxy_vars = ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY']
-                old_proxies = {}
-                for var in proxy_vars:
-                    if var in os.environ:
-                        old_proxies[var] = os.environ.pop(var)
+                # Create client with explicit configuration
+                self.client = OpenAI(
+                    api_key=api_key,
+                    http_client=httpx.Client(
+                        follow_redirects=True,
+                        timeout=60.0
+                    )
+                )
                 
-                try:
-                    # Initialize OpenAI client without proxy settings
-                    self.client = OpenAI(api_key=api_key)
-                finally:
-                    # Restore proxy settings for other parts of the app
-                    for var, value in old_proxies.items():
-                        os.environ[var] = value
-                        
+                # Restore original httpx.Client.__init__
+                httpx.Client.__init__ = original_client_init
+                
             except Exception as e:
                 st.error(f"Error initializing OpenAI: {str(e)}")
                 self.client = None
@@ -40,19 +53,20 @@ class AIClient:
                 import anthropic
                 api_key = st.secrets["anthropic"]["api_key"]
                 
-                # Same proxy fix for Anthropic
-                proxy_vars = ['http_proxy', 'https_proxy', 'HTTP_PROXY', 'HTTPS_PROXY']
-                old_proxies = {}
-                for var in proxy_vars:
-                    if var in os.environ:
-                        old_proxies[var] = os.environ.pop(var)
+                # Similar fix for Anthropic if needed
+                import httpx
+                original_client_init = httpx.Client.__init__
                 
-                try:
-                    self.client = anthropic.Anthropic(api_key=api_key)
-                finally:
-                    for var, value in old_proxies.items():
-                        os.environ[var] = value
-                        
+                def patched_init(self, **kwargs):
+                    kwargs.pop('proxies', None)
+                    kwargs.pop('proxy', None)
+                    kwargs.pop('trust_env', None)
+                    original_client_init(self, **kwargs)
+                
+                httpx.Client.__init__ = patched_init
+                self.client = anthropic.Anthropic(api_key=api_key)
+                httpx.Client.__init__ = original_client_init
+                
             except Exception as e:
                 st.error(f"Error initializing Anthropic: {str(e)}")
                 self.client = None
