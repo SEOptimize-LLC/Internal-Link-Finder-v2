@@ -20,15 +20,17 @@ class AppConfig:
         cfg.domain = st.secrets.get("app", {}).get("domain", "")
         cfg.max_concurrency = int(st.secrets.get("app", {}).get("max_concurrency", 3))
 
-        gsc = st.secrets.get("gsc", {})
-        cfg.gsc_service_account_present = bool(gsc.get("type") == "service_account" and gsc.get("client_email"))
+        # GSC is now always disabled (no service account)
+        cfg.gsc_service_account_present = False
 
+        # DataForSEO (optional)
         dfs = st.secrets.get("dataforseo", {})
         cfg.dataforseo_present = bool(dfs.get("login") and dfs.get("password"))
 
-        sheets = st.secrets.get("sheets", {})
-        cfg.sheets_present = bool(sheets.get("type") == "service_account" and sheets.get("client_email"))
+        # Sheets is now always disabled (no service account)
+        cfg.sheets_present = False
 
+        # AI Providers
         openai = st.secrets.get("openai", {})
         cfg.openai_present = bool(openai.get("api_key"))
 
