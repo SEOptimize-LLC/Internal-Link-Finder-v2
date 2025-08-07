@@ -34,25 +34,22 @@ def init_session():
     ]))
     ss.setdefault("related_pages_map", {})
     ss.setdefault("processed", False)
-    ss.setdefault("use_gsc_api", False)
     ss.setdefault("use_dataforseo", False)
     ss.setdefault("use_ai_for_generation", True)
     ss.setdefault("use_ai_for_extraction", True)
-    ss.setdefault("gsc_domain", "")
-    ss.setdefault("gsc_date_range", "Last 90 days")
     ss.setdefault("ai_provider", None)
     ss.setdefault("ai_model", "")
     ss.setdefault("ai_temperature", 0.4)
-    ss.setdefault("current_client", "")  # Track current client being analyzed
+    ss.setdefault("current_client", "")
 
 init_session()
 
 cfg = AppConfig.load()
 
-# Sidebar: Secrets status and AI selection
+# Sidebar: Settings and Status
 st.sidebar.title("⚙️ Settings")
 
-# Multi-client support - show current client if set
+# Multi-client support
 if st.session_state.current_client:
     st.sidebar.success(f"📊 Analyzing: {st.session_state.current_client}")
 else:
@@ -60,27 +57,29 @@ else:
 
 st.sidebar.write(f"Max Concurrency: {cfg.max_concurrency}")
 
-# Status indicators
+# Status indicators (simplified)
 st.sidebar.subheader("🔌 Integration Status")
-render_status_badge("GSC API", "Disabled" if not cfg.gsc_service_account_present else "Ready")
-render_status_badge("DataForSEO", "OK" if cfg.dataforseo_present else "Not configured")
-render_status_badge("Sheets Export", "Disabled" if not cfg.sheets_present else "Ready")
-render_status_badge("OpenAI", "OK" if cfg.openai_present else "Missing")
-render_status_badge("Anthropic", "OK" if cfg.anthropic_present else "Not configured")
-render_status_badge("Gemini", "OK" if cfg.gemini_present else "Not configured")
+render_status_badge("DataForSEO", "✅ Ready" if cfg.dataforseo_present else "➖ Optional")
+render_status_badge("OpenAI", "✅ Ready" if cfg.openai_present else "❌ Required")
+render_status_badge("Anthropic", "✅ Ready" if cfg.anthropic_present else "➖ Optional")
+render_status_badge("Gemini", "✅ Ready" if cfg.gemini_present else "➖ Optional")
 
+# AI Configuration
 available_ai = get_available_ai_providers(cfg)
-st.sidebar.subheader("🤖 AI Options")
+st.sidebar.subheader("🤖 AI Configuration")
 st.sidebar.checkbox("Use AI for content generation", key="use_ai_for_generation", value=True)
-st.sidebar.checkbox("Use AI for keyword/entities extraction", key="use_ai_for_extraction", value=True, help="Used when GSC queries are missing or for enrichment")
+st.sidebar.checkbox("Use AI for keyword extraction", key="use_ai_for_extraction", value=True, 
+                   help="Extracts keywords from pages when GSC data is not available")
 
 if available_ai:
     st.sidebar.selectbox("AI Provider", options=available_ai, key="ai_provider")
     default_models = cfg.default_models.get(st.session_state.ai_provider, [])
-    st.sidebar.text_input("Model name", value=default_models[0] if default_models else "", key="ai_model", help="Override the default model name")
-    st.sidebar.slider("AI Temperature", 0.0, 1.0, value=st.session_state.ai_temperature, key="ai_temperature")
+    st.sidebar.text_input("Model", value=default_models[0] if default_models else "", key="ai_model", 
+                         help="Specify the AI model to use")
+    st.sidebar.slider("Temperature", 0.0, 1.0, value=st.session_state.ai_temperature, key="ai_temperature",
+                     help="Higher values = more creative, lower = more focused")
 else:
-    st.sidebar.error("⚠️ No AI providers configured! Please add at least one API key in secrets.")
+    st.sidebar.error("⚠️ No AI providers configured! Add at least one API key in secrets.")
     st.session_state.ai_provider = None
 
 # Initialize core services
@@ -91,7 +90,7 @@ link_analyzer = EnhancedLinkAnalyzer()
 perf_analyzer = PerformanceAnalyzer()
 export_manager = ExportManager()
 
-# AI client (cached)
+# AI client
 ai_client = get_ai_client_cached(
     provider=st.session_state.ai_provider,
     model=st.session_state.ai_model,
@@ -101,128 +100,178 @@ ai_client = get_ai_client_cached(
 link_content_generator = InternalLinkContentGenerator(ai_client=ai_client)
 dataforseo_client = DataForSEOClient() if cfg.dataforseo_present else None
 
-tabs = st.tabs(["📤 Upload & Validate", "🔍 Analyze Opportunities", "✏️ Generate Link Content", "📊 Reports & Export"])
+# Main content area with tabs
+tabs = st.tabs(["📤 Upload & Process", "🔍 Analyze Links", "✏️ Generate Content", "📊 Export Results"])
 
-# Tab 1: Upload & Validate
+# Tab 1: Upload & Process
 with tabs[0]:
-    st.header("📤 Upload & Validate")
+    st.header("📤 Upload & Process Files")
     
-    # Client identifier (optional but helpful for tracking)
-    client_name = st.text_input("Client/Website Name (optional)", 
-                                placeholder="e.g., Client ABC or example.com",
-                                help="Helps you track which client you're analyzing")
-    if client_name:
-        st.session_state.current_client = client_name
+    # Client identifier
+    col1, col2 = st.columns([2, 1])
+    with col1:
+        client_name = st.text_input("Client/Website Name (optional)", 
+                                   value=st.session_state.current_client,
+                                   placeholder="e.g., Client ABC or example.com",
+                                   help="Helps track and name exports for different clients")
+        if client_name:
+            st.session_state.current_client = client_name
     
-    render_info_box("Upload Screaming Frog Internal Links, Embeddings, and optionally a GSC CSV export.")
+    with col2:
+        st.checkbox("Use DataForSEO", key="use_dataforseo", 
+                   value=cfg.dataforseo_present,
+                   disabled=not cfg.dataforseo_present,
+                   help="Fetch search volume data (requires DataForSEO account)")
+    
+    st.divider()
+    
+    # File upload section
+    st.subheader("📁 Required Files")
+    render_info_box("""
+    **Required files from Screaming Frog:**
+    1. **Internal Links CSV** - Export from Internal tab
+    2. **Embeddings CSV** - Export after generating embeddings
+    
+    **Optional:**
+    3. **GSC Data CSV** - Export from Google Search Console Performance report
+    """)
+    
     files = render_upload_section()
-
-    # GSC Options (disabled if no service account)
-    if cfg.gsc_service_account_present:
-        st.checkbox("Use Google Search Console API", key="use_gsc_api", value=False)
-        if st.session_state.use_gsc_api:
-            st.subheader("GSC API Options")
-            st.session_state.gsc_domain = st.text_input(
-                "GSC Property URL", 
-                value=st.session_state.gsc_domain,
-                placeholder="https://www.example.com/",
-                help="Enter the exact property URL as it appears in GSC"
-            )
-            st.session_state.gsc_date_range = st.selectbox("GSC Date range", options=["Last 28 days", "Last 90 days", "Last 180 days"], index=1)
-    else:
-        st.info("💡 GSC API is disabled. Upload GSC data as CSV instead (export from Search Console).")
     
-    st.checkbox("Use DataForSEO for monthly search volume", key="use_dataforseo", value=cfg.dataforseo_present)
-
-    c1, c2 = st.columns(2)
-    with c1:
-        if st.button("🚀 Process Files", type="primary"):
-            if not files.get("links") or not files.get("embeddings"):
-                render_warning_box("Please upload at least Screaming Frog Internal Links and Embeddings files.")
-            else:
-                with st.spinner("Processing your files..."):
+    # Instructions for GSC export
+    with st.expander("📖 How to export GSC data"):
+        st.markdown("""
+        1. Go to [Google Search Console](https://search.google.com/search-console)
+        2. Select your property
+        3. Navigate to **Performance** → **Search results**
+        4. Set your date range (recommended: Last 3 months)
+        5. Enable all metrics: Clicks, Impressions, CTR, Position
+        6. Click **+ New** and add dimensions: **Page** and **Query**
+        7. Click **Export** (top right) → **Export CSV**
+        8. Upload the CSV file here
+        """)
+    
+    # Process button
+    if st.button("🚀 Process Files", type="primary", use_container_width=True):
+        if not files.get("links") or not files.get("embeddings"):
+            render_warning_box("⚠️ Please upload at least Internal Links and Embeddings CSV files from Screaming Frog.")
+        else:
+            with st.spinner("Processing your files..."):
+                try:
                     processed = data_processor.process_multiple_files(files)
                     st.session_state.links_df = processed["links_df"]
                     st.session_state.embeddings_map = processed["embeddings_map"]
                     st.session_state.gsc_raw_df = processed.get("gsc_raw_df")
+                    
                     if st.session_state.gsc_raw_df is not None:
                         st.session_state.gsc_metrics_df = gsc_processor.calculate_url_metrics(st.session_state.gsc_raw_df)
-                        st.success("✅ GSC metrics computed.")
+                        st.success(f"✅ GSC metrics computed from {len(st.session_state.gsc_raw_df):,} rows")
+                    
                     st.session_state.processed = True
-                    st.success(f"✅ Files processed successfully for {st.session_state.current_client or 'your website'}!")
+                    client_msg = f" for **{st.session_state.current_client}**" if st.session_state.current_client else ""
+                    st.success(f"✅ Files processed successfully{client_msg}!")
+                    
+                    # Show summary
+                    col1, col2, col3 = st.columns(3)
+                    with col1:
+                        st.metric("URLs with embeddings", len(st.session_state.embeddings_map))
+                    with col2:
+                        st.metric("Internal links found", len(st.session_state.links_df) if st.session_state.links_df is not None else 0)
+                    with col3:
+                        st.metric("GSC queries", len(st.session_state.gsc_raw_df) if st.session_state.gsc_raw_df is not None else 0)
+                        
+                except Exception as e:
+                    st.error(f"❌ Error processing files: {str(e)}")
     
-    with c2:
-        if st.session_state.use_gsc_api and cfg.gsc_service_account_present:
-            if st.button("📥 Fetch GSC via API"):
-                if not st.session_state.gsc_domain:
-                    render_warning_box("Please enter a GSC property URL first.")
-                else:
-                    with st.spinner("Fetching GSC data..."):
-                        try:
-                            gsc_df = gsc_processor.fetch_gsc_api(
-                                domain_property=st.session_state.gsc_domain,
-                                date_range=st.session_state.gsc_date_range
-                            )
-                            st.session_state.gsc_raw_df = gsc_df
-                            st.session_state.gsc_metrics_df = gsc_processor.calculate_url_metrics(gsc_df)
-                            st.success(f"✅ Fetched {len(gsc_df):,} GSC rows.")
-                        except Exception as e:
-                            render_warning_box(f"GSC API error: {e}")
+    # Preview section
+    if st.session_state.processed:
+        st.divider()
+        st.subheader("📋 Data Preview")
+        
+        tab1, tab2, tab3 = st.tabs(["Links", "GSC Data", "Embeddings"])
+        
+        with tab1:
+            if st.session_state.links_df is not None:
+                st.write(f"Showing first 10 of {len(st.session_state.links_df):,} links:")
+                st.dataframe(st.session_state.links_df.head(10), use_container_width=True)
+        
+        with tab2:
+            if st.session_state.gsc_raw_df is not None:
+                st.write(f"Showing first 10 of {len(st.session_state.gsc_raw_df):,} GSC rows:")
+                st.dataframe(st.session_state.gsc_raw_df.head(10), use_container_width=True)
+            else:
+                st.info("No GSC data uploaded (optional)")
+        
+        with tab3:
+            if st.session_state.embeddings_map:
+                st.write(f"Embeddings loaded for {len(st.session_state.embeddings_map)} URLs")
+                sample_urls = list(st.session_state.embeddings_map.keys())[:5]
+                st.write("Sample URLs with embeddings:")
+                for url in sample_urls:
+                    st.write(f"• {url}")
 
-    if st.session_state.processed or (st.session_state.gsc_raw_df is not None):
-        st.subheader("📋 Preview")
-        if st.session_state.links_df is not None:
-            st.write("**Links sample:**", st.session_state.links_df.head(10))
-        if st.session_state.gsc_raw_df is not None:
-            st.write("**GSC sample:**", st.session_state.gsc_raw_df.head(10))
-
-# Tab 2: Analyze Opportunities
+# Tab 2: Analyze Links
 with tabs[1]:
-    st.header("🔍 Analyze Opportunities")
+    st.header("🔍 Analyze Link Opportunities")
+    
     if not (st.session_state.embeddings_map and st.session_state.links_df is not None):
-        render_warning_box("Please complete Upload & Validate first.")
+        render_warning_box("⚠️ Please upload and process files in the first tab before analyzing.")
     else:
         params = render_analysis_controls()
-
-        if st.button("🔗 Compute Related Pages"):
-            with st.spinner("Computing related pages via embeddings..."):
-                related_pages_map = similarity_engine.compute_related_pages(
-                    embeddings_map=st.session_state.embeddings_map,
-                    top_k=params["top_k_related"]
-                )
-                st.session_state.related_pages_map = related_pages_map
-                st.success(f"✅ Computed related pages for {len(related_pages_map)} URLs.")
-
-        # Prepare keywords per URL (GSC or AI)
-        if st.button("🔑 Prepare Keywords per URL"):
-            if st.session_state.gsc_raw_df is not None and not st.session_state.gsc_raw_df.empty:
-                url_keywords_map = gsc_processor.extract_top_keywords_by_url(st.session_state.gsc_raw_df, top_n=3)
-                st.success("✅ Keywords extracted from GSC data.")
-            elif st.session_state.use_ai_for_extraction and ai_client is not None:
-                with st.spinner("Extracting keywords with AI (scraping URLs)..."):
-                    url_keywords_map = link_content_generator.ai_extract_keywords_for_urls(list(st.session_state.embeddings_map.keys()), max_urls=200)
-                st.info("✅ AI-based keyword extraction completed.")
-            else:
-                url_keywords_map = {}
-                st.info("ℹ️ No GSC queries and AI extraction disabled; skipping keyword extraction.")
-            st.session_state.url_keywords_map = url_keywords_map
-            st.success(f"✅ Prepared keywords for {len(url_keywords_map)} URLs.")
-
-        # DataForSEO volumes
-        if st.session_state.use_dataforseo and dataforseo_client is not None and st.session_state.url_keywords_map:
-            flat_keywords = sorted({kw for kws in st.session_state.url_keywords_map.values() for kw in kws})
-            if len(flat_keywords) > 0:
-                if st.button(f"📊 Fetch Search Volume for {len(flat_keywords)} keywords"):
-                    with st.spinner("Fetching monthly search volumes from DataForSEO..."):
-                        search_volume_map = dataforseo_client.get_monthly_search_volume(flat_keywords, location="US", language="English")
-                        st.session_state.search_volume_map = {k.lower(): v for k, v in search_volume_map.items()}
-                        st.success(f"✅ Retrieved volumes for {len(st.session_state.search_volume_map)} keywords.")
-
-        if st.button("🎯 Run Opportunity Analysis", type="primary"):
+        
+        col1, col2, col3 = st.columns(3)
+        
+        with col1:
+            if st.button("🔗 Find Related Pages", use_container_width=True):
+                with st.spinner("Computing semantic similarities..."):
+                    related_pages_map = similarity_engine.compute_related_pages(
+                        embeddings_map=st.session_state.embeddings_map,
+                        top_k=params["top_k_related"]
+                    )
+                    st.session_state.related_pages_map = related_pages_map
+                    st.success(f"✅ Found related pages for {len(related_pages_map)} URLs")
+        
+        with col2:
+            if st.button("🔑 Extract Keywords", use_container_width=True):
+                if st.session_state.gsc_raw_df is not None and not st.session_state.gsc_raw_df.empty:
+                    with st.spinner("Extracting keywords from GSC data..."):
+                        url_keywords_map = gsc_processor.extract_top_keywords_by_url(st.session_state.gsc_raw_df, top_n=3)
+                        st.session_state.url_keywords_map = url_keywords_map
+                        st.success(f"✅ Extracted keywords for {len(url_keywords_map)} URLs from GSC")
+                elif st.session_state.use_ai_for_extraction and ai_client is not None:
+                    with st.spinner("Extracting keywords using AI (this may take a moment)..."):
+                        url_keywords_map = link_content_generator.ai_extract_keywords_for_urls(
+                            list(st.session_state.embeddings_map.keys()), 
+                            max_urls=100
+                        )
+                        st.session_state.url_keywords_map = url_keywords_map
+                        st.success(f"✅ AI extracted keywords for {len(url_keywords_map)} URLs")
+                else:
+                    st.info("💡 Upload GSC data or enable AI extraction to get keyword insights")
+                    st.session_state.url_keywords_map = {}
+        
+        with col3:
+            if st.session_state.use_dataforseo and dataforseo_client and st.session_state.url_keywords_map:
+                flat_keywords = sorted({kw for kws in st.session_state.url_keywords_map.values() for kw in kws})
+                if flat_keywords:
+                    if st.button(f"📊 Get Search Volume ({len(flat_keywords)} kw)", use_container_width=True):
+                        with st.spinner("Fetching search volumes from DataForSEO..."):
+                            search_volume_map = dataforseo_client.get_monthly_search_volume(
+                                flat_keywords, 
+                                location="US", 
+                                language="English"
+                            )
+                            st.session_state.search_volume_map = {k.lower(): v for k, v in search_volume_map.items()}
+                            st.success(f"✅ Retrieved volumes for {len(st.session_state.search_volume_map)} keywords")
+        
+        st.divider()
+        
+        # Main analysis button
+        if st.button("🎯 Run Full Analysis", type="primary", use_container_width=True):
             if not st.session_state.related_pages_map:
-                render_warning_box("Compute Related Pages first.")
+                render_warning_box("⚠️ Please find related pages first!")
             else:
-                with st.spinner("Analyzing opportunities..."):
+                with st.spinner("Analyzing link opportunities..."):
                     analysis_df = link_analyzer.analyze_with_performance_data(
                         links_df=st.session_state.links_df,
                         related_pages_map=st.session_state.related_pages_map,
@@ -233,113 +282,235 @@ with tabs[1]:
                     )
                     analysis_df = perf_analyzer.score_opportunities(analysis_df)
                     st.session_state.analysis_df = analysis_df
-                    st.success(f"✅ Analysis complete with {len(analysis_df):,} target URLs.")
-
+                    st.success(f"✅ Analysis complete! Found opportunities for {len(analysis_df):,} pages")
+        
+        # Results display
         if st.session_state.analysis_df is not None:
-            st.dataframe(st.session_state.analysis_df.head(100), use_container_width=True)
-            c1, c2 = st.columns(2)
-            with c1:
-                if st.button("💾 Export Analysis as CSV"):
-                    filename = f"{st.session_state.current_client}_analysis.csv" if st.session_state.current_client else "analysis_report.csv"
+            st.divider()
+            st.subheader("📊 Analysis Results")
+            
+            # Filters
+            col1, col2 = st.columns(2)
+            with col1:
+                priority_filter = st.multiselect(
+                    "Filter by Priority",
+                    options=["High", "Medium", "Low"],
+                    default=["High", "Medium", "Low"]
+                )
+            
+            # Apply filters
+            filtered_df = st.session_state.analysis_df
+            if "Implementation Priority" in filtered_df.columns:
+                filtered_df = filtered_df[filtered_df["Implementation Priority"].isin(priority_filter)]
+            
+            # Display
+            st.write(f"Showing {len(filtered_df)} opportunities:")
+            st.dataframe(filtered_df.head(100), use_container_width=True)
+            
+            # Quick export
+            col1, col2 = st.columns(2)
+            with col1:
+                client_prefix = f"{st.session_state.current_client}_" if st.session_state.current_client else ""
+                filename = f"{client_prefix}link_analysis.csv"
+                if st.button("💾 Export as CSV", use_container_width=True):
                     export_manager.export_df(st.session_state.analysis_df, filename=filename)
-            with c2:
-                if st.button("📊 Export Analysis as XLSX"):
-                    filename = f"{st.session_state.current_client}_analysis.xlsx" if st.session_state.current_client else "analysis_report.xlsx"
+            with col2:
+                filename = f"{client_prefix}link_analysis.xlsx"
+                if st.button("📊 Export as Excel", use_container_width=True):
                     export_manager.export_excel({"Analysis": st.session_state.analysis_df}, filename=filename)
 
-# Tab 3: Generate Internal Link Content
+# Tab 3: Generate Content
 with tabs[2]:
-    st.header("✏️ Generate Internal Link Content")
-    if st.session_state.analysis_df is None or st.session_state.related_pages_map is None:
-        render_warning_box("Please run the analysis first.")
+    st.header("✏️ Generate Link Content")
+    
+    if not ai_client:
+        render_warning_box("⚠️ AI provider required! Configure OpenAI, Anthropic, or Gemini in the sidebar.")
+    elif st.session_state.analysis_df is None or st.session_state.related_pages_map is None:
+        render_warning_box("⚠️ Please run the analysis first in the Analyze Links tab.")
     else:
-        target_urls = sorted(st.session_state.related_pages_map.keys())
-        target_url = st.selectbox("Select a target URL", options=target_urls)
-        suggested_destinations = st.session_state.related_pages_map.get(target_url, [])[:10]
-        st.write("**Suggested destination URLs** (top by semantic similarity):")
-        st.write(pd.DataFrame({"Destination URL": suggested_destinations}))
-        destination_url = st.selectbox("Select a destination URL", options=suggested_destinations if suggested_destinations else target_urls)
+        col1, col2 = st.columns([1, 1])
+        
+        with col1:
+            target_urls = sorted(st.session_state.related_pages_map.keys())
+            target_url = st.selectbox(
+                "Select source page (where link will be placed)",
+                options=target_urls,
+                help="The page where you'll add the internal link"
+            )
+        
+        with col2:
+            suggested_destinations = st.session_state.related_pages_map.get(target_url, [])[:20]
+            destination_url = st.selectbox(
+                "Select destination page (where link points to)",
+                options=suggested_destinations if suggested_destinations else target_urls,
+                help="The page you're linking to"
+            )
+        
+        # Show similarity info
+        if suggested_destinations:
+            st.info(f"💡 These destinations are semantically related to the source page")
+        
+        # Generate button
+        if st.button("✨ Generate Link Suggestion", type="primary", use_container_width=True):
+            with st.spinner("AI is crafting the perfect internal link..."):
+                try:
+                    suggestion = link_content_generator.generate_link_suggestions(
+                        target_url=target_url,
+                        destination_url=destination_url,
+                        gsc_df=st.session_state.gsc_raw_df
+                    )
+                    
+                    # Display suggestion
+                    st.success("✅ Link suggestion generated!")
+                    
+                    col1, col2 = st.columns(2)
+                    with col1:
+                        st.markdown("**Suggested Anchor Text:**")
+                        st.code(suggestion.get("anchor_text", ""))
+                        
+                        st.markdown("**Placement Hint:**")
+                        st.write(suggestion.get("placement_hint", ""))
+                    
+                    with col2:
+                        st.markdown("**Content Snippet:**")
+                        st.write(suggestion.get("content_snippet", ""))
+                        
+                        qa = suggestion.get("qa", {})
+                        if qa.get("status") == "OK":
+                            st.success("✅ Quality check passed")
+                        else:
+                            st.warning(f"⚠️ {qa.get('notes', '')}")
+                    
+                    # Save to suggestions
+                    row = {
+                        "Target URL": target_url,
+                        "Destination URL": destination_url,
+                        "Anchor Text": suggestion.get("anchor_text", ""),
+                        "Placement Hint": suggestion.get("placement_hint", ""),
+                        "Content Snippet": suggestion.get("content_snippet", ""),
+                        "Status": "Suggested",
+                        "Implementation Priority": suggestion.get("priority", 0.5)
+                    }
+                    st.session_state.suggestions_df = pd.concat(
+                        [st.session_state.suggestions_df, pd.DataFrame([row])], 
+                        ignore_index=True
+                    )
+                    
+                except Exception as e:
+                    st.error(f"❌ Error generating suggestion: {str(e)}")
+        
+        # Display all suggestions
+        if len(st.session_state.suggestions_df) > 0:
+            st.divider()
+            st.subheader("📝 Generated Suggestions")
+            st.write(f"Total suggestions in this session: {len(st.session_state.suggestions_df)}")
+            st.dataframe(st.session_state.suggestions_df.tail(50), use_container_width=True)
+            
+            # Export suggestions
+            col1, col2 = st.columns(2)
+            with col1:
+                client_prefix = f"{st.session_state.current_client}_" if st.session_state.current_client else ""
+                if st.button("💾 Export Suggestions CSV", use_container_width=True):
+                    export_manager.export_df(
+                        st.session_state.suggestions_df, 
+                        filename=f"{client_prefix}link_suggestions.csv"
+                    )
+            with col2:
+                if st.button("📊 Export Suggestions Excel", use_container_width=True):
+                    export_manager.export_excel(
+                        {"Suggestions": st.session_state.suggestions_df}, 
+                        filename=f"{client_prefix}link_suggestions.xlsx"
+                    )
 
-        if st.button("✨ Generate Suggestion", type="primary"):
-            with st.spinner("Generating anchor and snippet..."):
-                suggestion = link_content_generator.generate_link_suggestions(
-                    target_url=target_url,
-                    destination_url=destination_url,
-                    gsc_df=st.session_state.gsc_raw_df
-                )
-                st.write("**Generated Suggestion:**")
-                st.json(suggestion)
-                row = {
-                    "Target URL": target_url,
-                    "Destination URL": destination_url,
-                    "Anchor Text": suggestion.get("anchor_text", ""),
-                    "Placement Hint": suggestion.get("placement_hint", ""),
-                    "Content Snippet": suggestion.get("content_snippet", ""),
-                    "Status": "Suggested",
-                    "Implementation Priority": suggestion.get("priority", 0.5)
-                }
-                st.session_state.suggestions_df = pd.concat([st.session_state.suggestions_df, pd.DataFrame([row])], ignore_index=True)
-
-        st.subheader("📝 Batch Suggestions")
-        st.write("Suggestions generated in this session:")
-        st.dataframe(st.session_state.suggestions_df.tail(50), use_container_width=True)
-        c1, c2 = st.columns(2)
-        with c1:
-            if len(st.session_state.suggestions_df) > 0 and st.button("💾 Export Suggestions CSV"):
-                filename = f"{st.session_state.current_client}_suggestions.csv" if st.session_state.current_client else "link_suggestions.csv"
-                export_manager.export_df(st.session_state.suggestions_df, filename=filename)
-        with c2:
-            if len(st.session_state.suggestions_df) > 0 and st.button("📊 Export Suggestions XLSX"):
-                filename = f"{st.session_state.current_client}_suggestions.xlsx" if st.session_state.current_client else "link_suggestions.xlsx"
-                export_manager.export_excel({"Suggestions": st.session_state.suggestions_df}, filename=filename)
-
-# Tab 4: Reports & Export
+# Tab 4: Export Results
 with tabs[3]:
-    st.header("📊 Reports & Export")
+    st.header("📊 Export All Results")
     
     if st.session_state.current_client:
         st.info(f"📁 Exporting data for: **{st.session_state.current_client}**")
     
-    if st.session_state.analysis_df is not None:
-        st.subheader("📈 Analysis Report")
-        st.dataframe(st.session_state.analysis_df.head(100), use_container_width=True)
-    if len(st.session_state.suggestions_df) > 0:
-        st.subheader("🔗 Link Suggestions")
-        st.dataframe(st.session_state.suggestions_df.tail(100), use_container_width=True)
+    # Summary
+    col1, col2, col3 = st.columns(3)
+    with col1:
+        analysis_count = len(st.session_state.analysis_df) if st.session_state.analysis_df is not None else 0
+        st.metric("Analysis Rows", f"{analysis_count:,}")
+    with col2:
+        suggestions_count = len(st.session_state.suggestions_df)
+        st.metric("Generated Suggestions", suggestions_count)
+    with col3:
+        total_opportunities = analysis_count
+        st.metric("Total Opportunities", f"{total_opportunities:,}")
+    
+    st.divider()
+    
+    # Export options
+    st.subheader("📦 Export Options")
+    
+    client_prefix = f"{st.session_state.current_client}_" if st.session_state.current_client else ""
+    
+    col1, col2 = st.columns(2)
+    
+    with col1:
+        st.markdown("### 📄 Individual Exports")
+        
+        if st.session_state.analysis_df is not None:
+            if st.button("💾 Export Analysis (CSV)", use_container_width=True):
+                export_manager.export_df(
+                    st.session_state.analysis_df, 
+                    filename=f"{client_prefix}analysis.csv"
+                )
+        
+        if len(st.session_state.suggestions_df) > 0:
+            if st.button("💾 Export Suggestions (CSV)", use_container_width=True):
+                export_manager.export_df(
+                    st.session_state.suggestions_df, 
+                    filename=f"{client_prefix}suggestions.csv"
+                )
+    
+    with col2:
+        st.markdown("### 📦 Bundle Exports")
+        
+        if st.session_state.analysis_df is not None:
+            if st.button("📊 Export All (Excel)", use_container_width=True):
+                sheets = {}
+                sheets["Analysis"] = st.session_state.analysis_df
+                if len(st.session_state.suggestions_df) > 0:
+                    sheets["Suggestions"] = st.session_state.suggestions_df
+                export_manager.export_excel(
+                    sheets, 
+                    filename=f"{client_prefix}complete_report.xlsx"
+                )
+            
+            if st.button("🗂️ Export All (ZIP)", use_container_width=True):
+                files = {
+                    "analysis.csv": st.session_state.analysis_df,
+                    "suggestions.csv": st.session_state.suggestions_df
+                }
+                export_manager.export_zip_csv(
+                    files, 
+                    filename=f"{client_prefix}all_data.zip"
+                )
+    
+    # Data preview
+    if st.session_state.analysis_df is not None or len(st.session_state.suggestions_df) > 0:
+        st.divider()
+        st.subheader("📋 Data Preview")
+        
+        tab1, tab2 = st.tabs(["Analysis Results", "Link Suggestions"])
+        
+        with tab1:
+            if st.session_state.analysis_df is not None:
+                st.dataframe(st.session_state.analysis_df.head(50), use_container_width=True)
+            else:
+                st.info("No analysis data yet")
+        
+        with tab2:
+            if len(st.session_state.suggestions_df) > 0:
+                st.dataframe(st.session_state.suggestions_df.head(50), use_container_width=True)
+            else:
+                st.info("No suggestions generated yet")
 
-    c1, c2, c3 = st.columns(3)
-    with c1:
-        if st.session_state.analysis_df is not None and st.button("💾 Download All (CSV)"):
-            filename = f"{st.session_state.current_client}_bundle.zip" if st.session_state.current_client else "reports_bundle.zip"
-            export_manager.export_zip_csv({
-                "analysis_report.csv": st.session_state.analysis_df,
-                "link_suggestions.csv": st.session_state.suggestions_df
-            }, filename=filename)
-    with c2:
-        if st.session_state.analysis_df is not None and st.button("📊 Download All (XLSX)"):
-            filename = f"{st.session_state.current_client}_reports.xlsx" if st.session_state.current_client else "reports_bundle.xlsx"
-            export_manager.export_excel({
-                "Analysis": st.session_state.analysis_df,
-                "Suggestions": st.session_state.suggestions_df
-            }, filename=filename)
-    with c3:
-        if cfg.sheets_present:
-            st.write("☁️ **Google Sheets Export**")
-            sheet_title = st.text_input("Spreadsheet Title", 
-                                       value=f"{st.session_state.current_client} Link Analysis" if st.session_state.current_client else "Internal Link Reports")
-            create_new = st.checkbox("Create new spreadsheet", value=True)
-            if st.button("📤 Export to Google Sheets"):
-                try:
-                    sheets = {}
-                    if st.session_state.analysis_df is not None:
-                        sheets["Analysis"] = st.session_state.analysis_df
-                    if len(st.session_state.suggestions_df) > 0:
-                        sheets["Suggestions"] = st.session_state.suggestions_df
-                    url = export_manager.export_to_google_sheets(sheets, sheet_title, create_new=create_new)
-                    st.success(f"✅ Exported to Google Sheets: {url}")
-                except Exception as e:
-                    render_warning_box(f"Sheets export failed: {e}")
-        else:
-            st.info("💡 Google Sheets export is disabled (no service account configured).")
-
-st.caption("🔗 Enhanced Internal Link Opportunity Finder — Multi-Client SEO Tool")
+# Footer
+st.divider()
+st.caption("🔗 Enhanced Internal Link Opportunity Finder | Multi-Client SEO Tool | File Upload Version")
+st.caption("Export GSC data manually and upload as CSV for best results")
