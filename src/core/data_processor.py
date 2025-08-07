@@ -111,16 +111,89 @@ class EnhancedDataProcessor:
         raise ValueError(f"Could not find embeddings in CSV. Found columns: {', '.join(df.columns[:10])}... Please ensure your embeddings are in a column containing 'embedding' or 'vector' in the name.")
 
     def _normalize_gsc_df(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Normalize GSC data with flexible column name matching"""
+        if df is None or df.empty:
+            return df
+        
+        # Create a mapping for standard column names
         rename_map = {}
+        
+        # Find page/URL column (most important)
+        page_col = None
         for c in df.columns:
-            lc = c.lower().strip()
-            if lc in ("date","page","query","clicks","impressions","ctr","position"):
-                rename_map[c] = lc
+            c_lower = c.lower().strip()
+            # Check for various page/URL column names
+            if any(term in c_lower for term in ["page", "url", "address", "landing"]):
+                page_col = c
+                rename_map[c] = "page"
+                break
+        
+        # If no page column found, raise error with helpful message
+        if page_col is None:
+            available_cols = ', '.join(df.columns[:10])
+            raise ValueError(f"GSC data must have a page/URL column. Found columns: {available_cols}...")
+        
+        # Find query column
+        for c in df.columns:
+            c_lower = c.lower().strip()
+            if c_lower in ("query", "queries", "keyword", "keywords", "search term", "search query"):
+                rename_map[c] = "query"
+                break
+        
+        # Find clicks column
+        for c in df.columns:
+            c_lower = c.lower().strip()
+            if "click" in c_lower:
+                rename_map[c] = "clicks"
+                break
+        
+        # Find impressions column
+        for c in df.columns:
+            c_lower = c.lower().strip()
+            if "impression" in c_lower:
+                rename_map[c] = "impressions"
+                break
+        
+        # Find CTR column
+        for c in df.columns:
+            c_lower = c.lower().strip()
+            if "ctr" in c_lower or "click through" in c_lower or "clickthrough" in c_lower:
+                rename_map[c] = "ctr"
+                break
+        
+        # Find position column
+        for c in df.columns:
+            c_lower = c.lower().strip()
+            if "position" in c_lower or "ranking" in c_lower or "rank" in c_lower:
+                rename_map[c] = "position"
+                break
+        
+        # Find date column (if exists)
+        for c in df.columns:
+            c_lower = c.lower().strip()
+            if "date" in c_lower:
+                rename_map[c] = "date"
+                break
+        
+        # Apply the rename mapping
         df = df.rename(columns=rename_map)
-        if "clicks" in df.columns: df["clicks"] = pd.to_numeric(df["clicks"], errors="coerce").fillna(0).astype(int)
-        if "impressions" in df.columns: df["impressions"] = pd.to_numeric(df["impressions"], errors="coerce").fillna(0).astype(int)
-        if "ctr" in df.columns: df["ctr"] = pd.to_numeric(df["ctr"], errors="coerce").fillna(0.0)
-        if "position" in df.columns: df["position"] = pd.to_numeric(df["position"], errors="coerce").fillna(0.0)
-        if "page" in df.columns: df["page"] = df["page"].astype(str).str.strip()
-        if "query" in df.columns: df["query"] = df["query"].astype(str).str.strip()
+        
+        # Convert data types for known columns
+        if "clicks" in df.columns: 
+            df["clicks"] = pd.to_numeric(df["clicks"], errors="coerce").fillna(0).astype(int)
+        if "impressions" in df.columns: 
+            df["impressions"] = pd.to_numeric(df["impressions"], errors="coerce").fillna(0).astype(int)
+        if "ctr" in df.columns: 
+            # Handle percentage formats (e.g., "5.2%" -> 0.052)
+            if df["ctr"].dtype == 'object':
+                df["ctr"] = df["ctr"].astype(str).str.rstrip('%').astype('float') / 100.0
+            else:
+                df["ctr"] = pd.to_numeric(df["ctr"], errors="coerce").fillna(0.0)
+        if "position" in df.columns: 
+            df["position"] = pd.to_numeric(df["position"], errors="coerce").fillna(0.0)
+        if "page" in df.columns: 
+            df["page"] = df["page"].astype(str).str.strip()
+        if "query" in df.columns: 
+            df["query"] = df["query"].astype(str).str.strip()
+        
         return df
