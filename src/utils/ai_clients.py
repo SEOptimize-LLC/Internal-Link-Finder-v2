@@ -13,17 +13,16 @@ class AIClient:
         self._init_client()
 
     def _init_client(self):
+        # NEVER import OpenAI or Anthropic SDKs - only use requests
         if self.provider == "OpenAI":
-            # NEVER import OpenAI SDK - only use requests
             self.api_key = st.secrets.get("openai", {}).get("api_key")
             if not self.api_key:
                 st.error("OpenAI API key not found in secrets")
             self.client = None  # We don't use a client for OpenAI
                 
         elif self.provider == "Anthropic":
-            # Also skip Anthropic SDK to avoid similar issues
             self.api_key = st.secrets.get("anthropic", {}).get("api_key")
-            self.client = None
+            self.client = None  # We don't use a client for Anthropic
                 
         elif self.provider == "Gemini":
             try:
