@@ -20,7 +20,7 @@ class DataForSEOClient:
         auth_str = f"{self.login}:{self.password}"
         self.auth_header = "Basic " + base64.b64encode(auth_str.encode()).decode()
 
-    def _post(self, payload: List[Dict]) -> Dict:
+    def _post(self, post_data: Dict) -> Dict:
         """Make POST request to DataForSEO API"""
         headers = {
             "Authorization": self.auth_header,
@@ -30,14 +30,14 @@ class DataForSEOClient:
             resp = requests.post(
                 self.BASE_URL,
                 headers=headers,
-                data=json.dumps(payload),
+                data=json.dumps(post_data),
                 timeout=60
             )
             resp.raise_for_status()
             return resp.json()
         except requests.exceptions.RequestException as e:
             st.error(f"DataForSEO API request failed: {str(e)}")
-            if hasattr(e.response, 'text'):
+            if hasattr(e, 'response') and hasattr(e.response, 'text'):
                 st.error(f"Response: {e.response.text}")
             raise
 
@@ -51,81 +51,71 @@ class DataForSEOClient:
         
         results: Dict[str, int] = {}
         
-        # Batch in groups of 1,000 as requested
+        # Batch in groups of 1,000 (DataForSEO charges same for 1-1000)
         chunk_size = 1000
         
-        # Location codes mapping - DataForSEO uses specific location codes
-        loc_code = {
-            "US": 2840, 
-            "United States": 2840, 
-            "GB": 2826, 
-            "UK": 2826, 
-            "Canada": 2124,
-            "AU": 2036,
-            "Australia": 2036
-        }.get(location, 2840)
+        # Map common location names to DataForSEO format
+        location_name_map = {
+            "US": "United States",
+            "USA": "United States",
+            "UK": "United Kingdom",
+            "GB": "United Kingdom",
+            "CA": "Canada",
+            "AU": "Australia"
+        }
+        location_name = location_name_map.get(location, location)
         
         # Process keywords in chunks
         chunks = [keywords[i:i+chunk_size] for i in range(0, len(keywords), chunk_size)]
         
-        for i, chunk in enumerate(chunks):
+        for chunk_idx, chunk in enumerate(chunks):
             try:
-                # Correct payload format for clickstream endpoint
-                # The API expects an array of task objects
-                payload = [
-                    {
-                        "keywords": chunk,
-                        "location_code": loc_code,
-                        "language_code": "en"  # DataForSEO uses language codes, not names
-                    }
-                ]
+                # Format exactly as shown in DataForSEO documentation
+                # Using dict with numeric keys
+                post_data = dict()
+                post_data[0] = dict(
+                    keywords=chunk,
+                    location_name=location_name,
+                    language_name=language
+                )
                 
                 # Make API request
-                data = self._post(payload)
+                response = self._post(post_data)
                 
                 # Parse response
-                if "tasks" in data:
-                    for task in data["tasks"]:
-                        if task.get("status_code") == 20000:  # Success
+                if response.get("status_code") == 20000:
+                    tasks = response.get("tasks", [])
+                    for task in tasks:
+                        if task.get("status_code") == 20000:  # Task success
                             result_data = task.get("result", [])
-                            if result_data and len(result_data) > 0:
-                                items = result_data[0].get("items", [])
+                            for result in result_data:
+                                items = result.get("items", [])
                                 for item in items:
                                     kw = item.get("keyword", "")
-                                    vol = item.get("search_volume", 0)
+                                    # DataForSEO returns search_volume directly
+                                    vol = item.get("search_volume", 0) or 0
                                     if kw:
                                         # Store with lowercase for case-insensitive matching
                                         results[kw.lower()] = vol
                         else:
-                            # Log error but continue processing
+                            # Task-level error
                             error_msg = task.get("status_message", "Unknown error")
-                            st.warning(f"DataForSEO API error for batch {i+1}: {error_msg}")
+                            st.warning(f"DataForSEO task error for batch {chunk_idx+1}: {error_msg}")
+                else:
+                    # Response-level error
+                    error_msg = response.get("status_message", "Unknown error")
+                    st.error(f"DataForSEO response error: {error_msg}")
                 
                 # Rate limiting - be nice to the API
-                if i < len(chunks) - 1:
+                if chunk_idx < len(chunks) - 1:
                     time.sleep(1)
                     
             except Exception as e:
-                st.error(f"Error processing batch {i+1} of {len(chunks)}: {str(e)}")
+                st.error(f"Error processing batch {chunk_idx+1} of {len(chunks)}: {str(e)}")
                 continue
         
+        # Show summary
+        if results:
+            st.info(f"📊 Successfully retrieved search volumes for {len(results)} keywords out of {len(keywords)} requested.")
+        
         return results
-
-
-# Standalone function to avoid caching the client instance
-def get_search_volumes(keywords: List[str], login: str, password: str, location: str = "US") -> Dict[str, int]:
-    """Non-cached version for direct use"""
-    # Create a temporary client just for this request
-    temp_secrets = st.secrets._store.copy()
-    temp_secrets["dataforseo"] = {"login": login, "password": password}
-    
-    # Temporarily override secrets
-    original_secrets = st.secrets._store
-    st.secrets._store = temp_secrets
-    
-    try:
-        client = DataForSEOClient()
-        return client.get_monthly_search_volume(keywords, location, "English")
-    finally:
-        # Restore original secrets
-        st.secrets._store = original_secrets
