@@ -251,22 +251,22 @@ with tabs[1]:
                     st.session_state.url_keywords_map = {}
         
         with col3:
-            if st.session_state.use_dataforseo and dataforseo_client and st.session_state.url_keywords_map:
+            if st.session_state.use_dataforseo and dataforseo_client is not None and st.session_state.url_keywords_map:
                 flat_keywords = sorted({kw for kws in st.session_state.url_keywords_map.values() for kw in kws})
-                if flat_keywords:
-                    if st.button(f"📊 Get Search Volume ({len(flat_keywords)} kw)", use_container_width=True):
-                        with st.spinner(f"Fetching search volumes from DataForSEO ({len(flat_keywords)} keywords in {(len(flat_keywords)-1)//1000 + 1} batches)..."):
-                            from src.core.dataforseo_client import get_search_volumes_cached
-                            dfs_secrets = st.secrets.get("dataforseo", {})
-                            search_volume_map = get_search_volumes_cached(
-                                flat_keywords,
-                                dfs_secrets.get("login", ""),
-                                dfs_secrets.get("password", ""),
-                                location="US",
-                                language="English"
-                            )
-                            st.session_state.search_volume_map = {k.lower(): v for k, v in search_volume_map.items()}
-                            st.success(f"✅ Retrieved volumes for {len(st.session_state.search_volume_map)} keywords")
+                if len(flat_keywords) > 0:
+                    batch_count = (len(flat_keywords) - 1) // 1000 + 1
+                    if st.button(f"📊 Get Search Volume ({len(flat_keywords)} keywords, {batch_count} {'batch' if batch_count == 1 else 'batches'})", use_container_width=True):
+                        with st.spinner(f"Fetching search volumes from DataForSEO..."):
+                            try:
+                                search_volume_map = dataforseo_client.get_monthly_search_volume(
+                                    flat_keywords,
+                                    location="US",
+                                    language="English"
+                                )
+                                st.session_state.search_volume_map = {k.lower(): v for k, v in search_volume_map.items()}
+                                st.success(f"✅ Retrieved volumes for {len(st.session_state.search_volume_map)} keywords.")
+                        except Exception as e:
+                            st.error(f"Failed to fetch search volumes: {str(e)}")
         
         st.divider()
         
@@ -518,4 +518,5 @@ with tabs[3]:
 st.divider()
 st.caption("🔗 Enhanced Internal Link Opportunity Finder | Multi-Client SEO Tool | File Upload Version")
 st.caption("Export GSC data manually and upload as CSV for best results")
+
 
