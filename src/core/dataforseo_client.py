@@ -10,8 +10,9 @@ class DataForSEOClient:
     # Using the clickstream endpoint
     BASE_URL = "https://api.dataforseo.com/v3/keywords_data/clickstream_data/dataforseo_search_volume/live"
     
-    # Conservative limits based on actual API behavior
-    MAX_KEYWORD_LENGTH = 80  # Being conservative - API seems to reject longer ones
+    # DataForSEO limits (based on actual API behavior)
+    MAX_KEYWORD_LENGTH = 80  # Maximum characters
+    MAX_KEYWORD_WORDS = 10   # Maximum number of words (based on error messages)
     MAX_KEYWORDS_PER_REQUEST = 1000  
     MIN_KEYWORD_LENGTH = 1  
 
@@ -48,34 +49,59 @@ class DataForSEOClient:
                 st.error(f"Response: {error_text}")
             raise
 
-    def _clean_and_truncate_keyword(self, keyword: str) -> str:
-        """Aggressively clean and truncate keywords to meet API requirements"""
-        # Remove any quotes (single or double)
+    def _clean_and_validate_keyword(self, keyword: str) -> tuple[str, str]:
+        """
+        Clean and validate keyword according to DataForSEO requirements.
+        Returns: (cleaned_keyword, skip_reason) - skip_reason is empty string if valid
+        """
+        # Remove quotes and special characters
         keyword = keyword.replace('"', '').replace("'", '').replace('"', '').replace('"', '')
-        
-        # Remove other problematic characters
         keyword = keyword.replace('\n', ' ').replace('\r', ' ').replace('\t', ' ')
         
-        # Replace multiple spaces with single space
-        keyword = re.sub(r'\s+', ' ', keyword)
+        # Remove problematic punctuation but keep spaces and hyphens
+        keyword = re.sub(r'[^\w\s\-]', ' ', keyword)
         
-        # Remove special characters that might cause issues (keep only alphanumeric, spaces, and basic punctuation)
-        # Keep: letters, numbers, spaces, hyphens, and basic punctuation
-        keyword = re.sub(r'[^a-zA-Z0-9\s\-\.\,]', ' ', keyword)
-        
-        # Clean up any resulting multiple spaces
+        # Clean up multiple spaces
         keyword = ' '.join(keyword.split())
+        keyword = keyword.strip()
         
-        # Trim to max length
+        # Check character length
+        if len(keyword) < self.MIN_KEYWORD_LENGTH:
+            return "", "Too short"
+        
         if len(keyword) > self.MAX_KEYWORD_LENGTH:
-            # Cut at word boundary to keep it readable
-            keyword = keyword[:self.MAX_KEYWORD_LENGTH]
-            # Try to cut at last space to avoid partial words
-            last_space = keyword.rfind(' ')
-            if last_space > 50:  # Only cut at space if we're keeping at least 50 chars
-                keyword = keyword[:last_space]
+            # Try to truncate at word boundary
+            words = keyword.split()
+            truncated = ""
+            for word in words:
+                if len(truncated + " " + word) <= self.MAX_KEYWORD_LENGTH:
+                    truncated = (truncated + " " + word).strip()
+                else:
+                    break
+            keyword = truncated
+            if len(keyword) < self.MIN_KEYWORD_LENGTH:
+                return "", f"Too long ({len(keyword)} chars after truncation)"
         
-        return keyword.strip()
+        # Check word count
+        word_count = len(keyword.split())
+        if word_count > self.MAX_KEYWORD_WORDS:
+            # Keep only first N words
+            words = keyword.split()[:self.MAX_KEYWORD_WORDS]
+            keyword = ' '.join(words)
+            # Note: we truncated but still return as valid
+        
+        # Final validation
+        word_count = len(keyword.split())
+        if word_count > self.MAX_KEYWORD_WORDS:
+            return "", f"Too many words ({word_count} words)"
+        
+        if len(keyword) < self.MIN_KEYWORD_LENGTH:
+            return "", "Too short after cleaning"
+        
+        if len(keyword) > self.MAX_KEYWORD_LENGTH:
+            return "", f"Too long ({len(keyword)} chars)"
+        
+        return keyword, ""
 
     def get_monthly_search_volume(self, keywords: List[str], location: str = "US", language: str = "English") -> Dict[str, int]:
         """
@@ -84,25 +110,19 @@ class DataForSEOClient:
         if not keywords:
             return {}
         
-        # Clean and validate keywords
+        # Process and validate keywords
         valid_keywords = []
         skipped_keywords = []
-        original_to_cleaned = {}  # Map original to cleaned for result mapping
+        original_to_cleaned = {}
         
         for original_kw in keywords:
-            # Store original (lowercased) for mapping
-            original_lower = original_kw.lower()
+            cleaned_kw, skip_reason = self._clean_and_validate_keyword(original_kw)
             
-            # Clean the keyword
-            cleaned_kw = self._clean_and_truncate_keyword(original_kw)
-            
-            # Validate
-            if self.MIN_KEYWORD_LENGTH <= len(cleaned_kw) <= self.MAX_KEYWORD_LENGTH:
+            if cleaned_kw and not skip_reason:
                 valid_keywords.append(cleaned_kw)
-                original_to_cleaned[original_lower] = cleaned_kw.lower()
+                original_to_cleaned[original_kw.lower()] = cleaned_kw.lower()
             else:
-                reason = f"Too {'short' if len(cleaned_kw) < self.MIN_KEYWORD_LENGTH else 'long'} ({len(cleaned_kw)} chars)"
-                skipped_keywords.append((original_kw, reason))
+                skipped_keywords.append((original_kw, skip_reason))
         
         # Remove duplicates
         seen = set()
@@ -112,24 +132,46 @@ class DataForSEOClient:
                 seen.add(kw.lower())
                 unique_keywords.append(kw)
         
-        # Report what we're doing
+        # Report statistics
+        st.write("### Keyword Processing Summary")
+        col1, col2, col3 = st.columns(3)
+        with col1:
+            st.metric("Original Keywords", len(keywords))
+        with col2:
+            st.metric("Valid Keywords", len(unique_keywords))
+        with col3:
+            st.metric("Skipped Keywords", len(skipped_keywords))
+        
         if skipped_keywords:
-            st.warning(f"⚠️ Skipped {len(skipped_keywords)} keywords (too long/short or invalid)")
-            with st.expander(f"Skipped keywords"):
-                for kw, reason in skipped_keywords[:20]:
-                    if len(kw) > 80:
-                        display_kw = kw[:77] + "..."
-                    else:
-                        display_kw = kw
-                    st.write(f"• {display_kw} - {reason}")
-                if len(skipped_keywords) > 20:
-                    st.write(f"... and {len(skipped_keywords) - 20} more")
+            with st.expander(f"⚠️ Skipped {len(skipped_keywords)} keywords (too long/many words)"):
+                # Group by skip reason
+                reasons = {}
+                for kw, reason in skipped_keywords:
+                    if reason not in reasons:
+                        reasons[reason] = []
+                    reasons[reason].append(kw)
+                
+                for reason, kws in reasons.items():
+                    st.write(f"**{reason}** ({len(kws)} keywords):")
+                    for kw in kws[:5]:  # Show first 5 of each type
+                        display_kw = kw[:60] + "..." if len(kw) > 60 else kw
+                        word_count = len(kw.split())
+                        st.write(f"  • {display_kw} ({word_count} words, {len(kw)} chars)")
+                    if len(kws) > 5:
+                        st.write(f"  ... and {len(kws) - 5} more")
         
         if not unique_keywords:
-            st.error("No valid keywords after cleaning. All keywords were too long or invalid.")
+            st.error("❌ No valid keywords after filtering. All keywords exceeded word/character limits.")
+            st.info("💡 Try using shorter, more focused keywords (max 10 words, 80 characters)")
             return {}
         
-        st.info(f"📊 Sending {len(unique_keywords)} keywords to DataForSEO (from {len(keywords)} original)")
+        # Show what we're sending
+        with st.expander("📤 Keywords being sent to API"):
+            sample_size = min(20, len(unique_keywords))
+            st.write(f"Showing first {sample_size} of {len(unique_keywords)} keywords:")
+            for kw in unique_keywords[:sample_size]:
+                word_count = len(kw.split())
+                st.write(f"• {kw} ({word_count} words)")
         
         results: Dict[str, int] = {}
         
@@ -161,11 +203,17 @@ class DataForSEOClient:
                 progress_bar.progress(progress)
                 status_text.text(f"Processing batch {chunk_idx + 1} of {len(chunks)} ({len(chunk)} keywords)...")
                 
-                # Double-check chunk keywords aren't too long (safety check)
-                safe_chunk = [kw for kw in chunk if len(kw) <= self.MAX_KEYWORD_LENGTH]
+                # Final safety check - ensure no keyword exceeds limits
+                safe_chunk = []
+                for kw in chunk:
+                    word_count = len(kw.split())
+                    if word_count <= self.MAX_KEYWORD_WORDS and len(kw) <= self.MAX_KEYWORD_LENGTH:
+                        safe_chunk.append(kw)
+                    else:
+                        st.warning(f"Skipping keyword in batch: '{kw[:50]}...' ({word_count} words)")
                 
                 if not safe_chunk:
-                    st.warning(f"Batch {chunk_idx + 1}: All keywords too long after safety check, skipping")
+                    st.warning(f"Batch {chunk_idx + 1}: All keywords invalid after final check")
                     continue
                 
                 # Build request
@@ -192,13 +240,14 @@ class DataForSEOClient:
                                     vol = item.get("search_volume", 0) or 0
                                     
                                     if kw:
-                                        # Store with the cleaned keyword
-                                        results[kw.lower()] = vol
+                                        # Store result
+                                        kw_lower = kw.lower()
+                                        results[kw_lower] = vol
                                         successful_keywords += 1
                                         
-                                        # Also try to map back to original
+                                        # Map back to original
                                         for orig, cleaned in original_to_cleaned.items():
-                                            if cleaned == kw.lower():
+                                            if cleaned == kw_lower:
                                                 results[orig] = vol
                         else:
                             error_msg = task.get("status_message", "Unknown error")
@@ -212,31 +261,31 @@ class DataForSEOClient:
                     time.sleep(0.5)
                     
             except Exception as e:
-                failed_batches.append(f"Batch {chunk_idx + 1}: {str(e)}")
+                failed_batches.append(f"Batch {chunk_idx + 1}: {str(e)[:100]}")
                 continue
         
         # Clear progress
         progress_bar.empty()
         status_text.empty()
         
-        # Report results
+        # Final report
         if successful_keywords > 0:
             st.success(f"✅ Retrieved search volumes for {successful_keywords} keywords")
             
-            # Show sample
-            with st.expander("Sample results"):
-                sample = list(results.items())[:10]
-                for kw, vol in sample:
-                    st.write(f"• **{kw}**: {vol:,} searches/month")
+            # Show sample results
+            with st.expander("📊 Sample search volume results"):
+                sample = list(results.items())[:20]
+                if sample:
+                    for kw, vol in sample:
+                        st.write(f"• **{kw}**: {vol:,} searches/month")
         
         if failed_batches:
-            with st.expander(f"⚠️ {len(failed_batches)} batch errors"):
-                for error in failed_batches[:5]:
+            with st.expander(f"❌ Failed batches ({len(failed_batches)})"):
+                for error in failed_batches:
                     st.write(f"• {error}")
-                if len(failed_batches) > 5:
-                    st.write(f"... and {len(failed_batches) - 5} more")
         
         if not results:
-            st.error("❌ No search volumes retrieved. Check the error messages above.")
+            st.error("❌ No search volumes retrieved.")
+            st.info("💡 Try using keywords with max 10 words and 80 characters")
         
         return results
